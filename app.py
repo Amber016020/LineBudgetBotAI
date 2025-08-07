@@ -47,3 +47,5 @@ handler.add(MessageEvent, message=TextMessageContent)(handle_message)
 # === Local Dev Entry Point ===
 if __name__ == "__main__":
     app.run()
+
+application = app
