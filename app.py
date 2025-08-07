@@ -18,7 +18,7 @@ from linebot.v3.webhooks import (
 
 # Initialize LINE bot configuration
 configuration = Configuration(access_token=os.getenv("CHANNEL_ACCESS_TOKEN"))
-handler = WebhookHandler(os.getenv("CHANNEL_SECRET"))
+line_handler = WebhookHandler(os.getenv("CHANNEL_SECRET"))
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -30,7 +30,7 @@ def callback():
     body = request.get_data(as_text=True)
 
     try:
-        handler.handle(body, signature)
+        line_handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
     except Exception as e:
@@ -40,12 +40,10 @@ def callback():
     return 'OK'
 
 # === Register Event Handlers ===
-handler.add(FollowEvent)(handle_follow)
-handler.add(PostbackEvent)(handle_postback)
-handler.add(MessageEvent, message=TextMessageContent)(handle_message)
+line_handler.add(FollowEvent)(handle_follow)
+line_handler.add(PostbackEvent)(handle_postback)
+line_handler.add(MessageEvent, message=TextMessageContent)(handle_message)
 
 # === Local Dev Entry Point ===
 if __name__ == "__main__":
     app.run()
-
-application = app
