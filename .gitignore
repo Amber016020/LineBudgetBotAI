@@ -1,0 +1,40 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# VSCode project settings
+.vscode/
+
+# Virtual environments
+venv/
+.env
+.venv/
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+
+# Environment variable files
+.env*
+*.env
+
+# Logs
+*.log
+
+# Database
+*.sqlite3
+*.db
+
+# Ignore Jupyter Notebooks checkpoints if any
+.ipynb_checkpoints/
+
+# Ignore migrations if using Django (can remove if not used)
+migrations/
+
+# Ignore Supabase generated files (optional, if not needed)
+.supabase/
+
+# Ignore compiled shared object files
+*.so

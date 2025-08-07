@@ -1,0 +1,8 @@
+line-bot-sdk==3.7
+flask==3.0.0
+psycopg2-binary
+pytz>=2023.3
+openai
+supabase
+matplotlib
+seaborn>=0.11
