@@ -2,31 +2,37 @@ import os
 from datetime import datetime
 from supabase import create_client
 from linebot.v3.messaging.models import ImageMessage
-from apps.common.database import get_user_transactions
 from apps.common.i18n import t
+from apps.common.database import get_user_category_sums_for_chart 
 from quickchart import QuickChart
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+
 def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetime, lang: str = "zh-TW") -> ImageMessage:
-    transactions = get_user_transactions(user_id, start_time=start_time, end_time=end_time)
-    category_sums = {}
-
-    # Sum expenses by category
-    for r in transactions:
-        category = r.get("category") or t("default_category", lang)
-        amount = r.get("amount", 0)
-
-        if category.lower() in [t("income", lang).lower()]:
-            continue
-        category_sums[category] = category_sums.get(category, 0) + amount
-
-    if not category_sums:
+    """
+    產生分類支出統計圖（長條圖）。
+    資料由 DB 端聚合：保留 0 金額類別，並依 categories.id 排序，含 id=0 的「未分類」。
+    """
+    rows = get_user_category_sums_for_chart(
+        user_id=user_id,
+        start_time=start_time,
+        end_time=end_time,
+        days=None,
+    )
+    if not rows:
         raise ValueError(t("no_expense_data", lang))
 
-    # Configure QuickChart
+    labels = [r["category"] for r in rows]
+    values = [float(r["total"] or 0) for r in rows]
+
+    # 若所有值都為 0，可視需求決定是否直接提示「沒有資料」
+    if sum(values) == 0:
+        raise ValueError(t("no_expense_data", lang))
+
+    # Configure QuickChart (Chart.js)
     qc = QuickChart()
     qc.width = 600
     qc.height = 400
@@ -35,12 +41,12 @@ def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetim
     qc.config = {
         "type": "bar",
         "data": {
-            "labels": list(category_sums.keys()),
+            "labels": labels,
             "datasets": [{
                 "label": t("expense_chart_ylabel", lang),
-                "data": list(category_sums.values()),
-                "backgroundColor": "rgba(54, 162, 235, 0.5)",
-                "borderColor": "rgb(54, 162, 235)",
+                "data": values,
+                "backgroundColor": "rgba(30, 102, 200, 1)",
+                "borderColor": "rgb(30, 102, 200)",
                 "borderWidth": 1
             }]
         },
@@ -52,22 +58,25 @@ def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetim
                     "font": {"size": 18}
                 },
                 "legend": {"display": False},
+                # 需要 datalabels 外掛
                 "datalabels": {
-                    "anchor": "end",
-                    "align": "end",
-                    "formatter": "function(value) { return 'NTD ' + new Intl.NumberFormat().format(value); }",
-                    "font": {"size": 12}
-                }
+                "anchor": "start",        # 錨點設在起點（長條底部）
+                "align": "end",           # 往下對齊
+                "offset": 20,             # 與長條保持距離（可調整）
+                "formatter": "function(value) { return 'NTD ' + new Intl.NumberFormat().format(value); }",
+                "font": {"size": 12},
+                "color": "#000"           # 顏色
+            }
             },
             "scales": {
-                "x": {
-                    "ticks": {"font": {"family": "sans-serif"}}
-                }
+                "x": {"ticks": {"font": {"family": "sans-serif"}}},
+                "y": {"beginAtZero": True}
             }
-        }
+        },
+        # QuickChart 啟用外掛
+        "plugins": ["chartjs-plugin-datalabels"]
     }
 
-    # Get chart image URL from QuickChart
     chart_url = qc.get_url()
 
     return ImageMessage(

@@ -1,6 +1,8 @@
 import psycopg2
 import os
 from datetime import datetime, timedelta
+from typing import List, Dict
+from apps.common.i18n import t
 
 POSTGRES_URL = os.getenv("POSTGRES_URL")
 
@@ -285,6 +287,81 @@ def get_user_transactions(user_id, start_time=None, end_time=None, days=None):
             }
             for r in cur.fetchall()
         ]
+
+def get_user_category_sums_for_chart(
+    user_id: str,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    days: int | None = None,
+) -> List[Dict]:
+    """
+    Return aggregated expense totals by category (include zero), ordered by category_id.
+    NOTE: This version EXCLUDES 'Uncategorized' (NULL/0) bucket.
+    """
+    user_uuid = get_user_uuid(user_id)
+    if not user_uuid:
+        return []
+
+    # 動態時間條件
+    time_filters: list[str] = []
+    params: list[object] = []
+
+    if days is not None:
+        since = datetime.utcnow() - timedelta(days=days)
+        time_filters.append("t.created_at >= %s")
+        params.append(since)
+    else:
+        if start_time:
+            time_filters.append("t.created_at >= %s")
+            params.append(start_time)
+        if end_time:
+            time_filters.append("t.created_at <= %s")
+            params.append(end_time)
+
+    time_sql = (" AND " + " AND ".join(time_filters)) if time_filters else ""
+
+    # 只統計「有分類」的支出；未分類 (NULL/0) 直接忽略
+    query = f"""
+        WITH user_cats AS (
+            SELECT id, name
+            FROM categories
+            WHERE (is_system_default = TRUE AND user_id = %s)
+            ORDER BY id
+        ),
+        tx AS (
+            SELECT t.category_id, t.amount
+            FROM transactions t
+            WHERE t.user_id = %s
+              AND (t.type <> 'income')
+              AND t.category_id IS NOT NULL
+              AND t.category_id <> 0
+              {time_sql}
+        )
+        SELECT
+            uc.id AS category_id,
+            uc.name AS category_name,
+            COALESCE(SUM(tx.amount), 0) AS total_amount
+        FROM user_cats uc
+        LEFT JOIN tx ON tx.category_id = uc.id
+        GROUP BY uc.id, uc.name
+        ORDER BY uc.id;
+    """
+
+    final_params = [user_uuid, user_uuid] + params
+
+    with conn.cursor() as cur:
+        cur.execute(query, final_params)
+        rows = cur.fetchall()
+
+    return [
+        {
+            "category_id": r[0],
+            "category": r[1],
+            "total": float(r[2]) if r[2] is not None else 0.0,
+        }
+        for r in rows
+    ]
+
 
 # Search transaction messages containing the keyword
 def find_transactions_by_keyword(user_id: str, keyword: str):
