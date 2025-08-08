@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 from typing import List, Dict
 from apps.common.i18n import t
+from config import DEFAULT_CATEGORIES
 
 POSTGRES_URL = os.getenv("POSTGRES_URL")
 
@@ -29,14 +30,9 @@ def ensure_default_categories(user_id: str):
     if not user_uuid:
         return
 
-    #base_names = ["food", "investment", "transport", "entertainment", "shopping", "medical", "others"]
-    # todo 抽到config
-    base_names = [
-            "餐飲", "投資", "交通",
-            "娛樂", "購物", "醫療", "其他"
-        ]
     with conn.cursor() as cur:
-        for name in base_names:
+        for cat in DEFAULT_CATEGORIES:
+            name = cat["name"]
             # Check if category exists for this user
             cur.execute("""
                 SELECT id, parent_id
@@ -74,10 +70,7 @@ def ensure_default_categories(user_id: str):
 
 # Add or update a user-defined subcategory under a specified root category.
 def add_user_category(user_id: str, keyword: str, category: str):
-    """
-    在指定的大類(category)底下，新增一個使用者自訂子類別(keyword)。
-    若同一使用者已存在同名子類別(不分大小寫)則不新增。
-    """
+
     ensure_user_exists(user_id)
     user_uuid = get_user_uuid(user_id)
     if not user_uuid:
@@ -89,7 +82,6 @@ def add_user_category(user_id: str, keyword: str, category: str):
         return
 
     with conn.cursor() as cur:
-        # 1) 找到 root category id（先找系統預設，再找使用者自訂的大類）
         cur.execute(
             """
             SELECT id
@@ -106,7 +98,6 @@ def add_user_category(user_id: str, keyword: str, category: str):
             raise ValueError(f"Root category '{category}' not found")
         root_id = row[0]
 
-        # 2) 檢查同 user 是否已有同名子類別（不分大小寫）
         cur.execute(
             """
             SELECT id
@@ -261,7 +252,7 @@ def get_user_transactions(user_id, start_time=None, end_time=None, days=None):
 
     # Prioritize the 'days' parameter if provided
     if days is not None:
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now() - timedelta(days=days)
         query += " AND t.created_at >= %s"
         params.append(since)
     else:
@@ -301,13 +292,12 @@ def get_user_category_sums_for_chart(
     user_uuid = get_user_uuid(user_id)
     if not user_uuid:
         return []
-
-    # 動態時間條件
+    
     time_filters: list[str] = []
     params: list[object] = []
 
     if days is not None:
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now() - timedelta(days=days)
         time_filters.append("t.created_at >= %s")
         params.append(since)
     else:
@@ -380,6 +370,6 @@ def update_transaction_category(transaction_id: int, category: str):
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE transactions
-            SET category = %s
+            SET category_id = %s
             WHERE id = %s
         """, (category, transaction_id))

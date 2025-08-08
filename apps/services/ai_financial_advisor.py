@@ -25,19 +25,23 @@ def handle_ai_question(user_id, question):
 
     # Create AI prompt for financial analysis
     prompt = (
-        "Use the [Transaction Records] below to:\n"
-        "- Group expenses by category (e.g., food, transport, clothing)\n"
-        "- Calculate the total and average spending per category\n"
-        "- Detect any unusually high spending\n"
-        "- Briefly mention what the user spent most on\n"
-        "- If possible, offer a friendly suggestion or insight based on these records\n"
-        "\n"
-        "Do NOT make up any records or infer income. Only use what is provided.\n"
-        "If the data is insufficient or very short, just say so politely.\n"
+        "You are an assistant for a personal finance chatbot.\n"
+        "Follow these rules based on the user's question:\n"
+        "1. If the user asks about spending, use ONLY the [Transaction Records] below to:\n"
+        "   - Group expenses by category (e.g., food, transport, clothing)\n"
+        "   - Calculate total and average spending per category\n"
+        "   - Identify the highest spending category or unusually high expenses\n"
+        "   - Give a short, friendly suggestion or insight if relevant\n"
+        "   Keep the reply concise (around 100 words) and in the same language as the user's question.\n"
+        "   Do NOT fabricate records or infer income. If data is insufficient, say so politely.\n"
+        "2. If the user asks about bot functions, briefly explain with an example such as "
+        "`午餐 100` to record an expense or `查帳` to check records.\n"
+        "3. If the user is just making small talk, respond casually and keep the conversation light.\n"
         "\n"
         f"[Transaction Records]\n{context}\n\n"
         f"[User Question] \"{question}\"\n"
-        "\nPlease answer in a single, friendly, and clear paragraph (using the same language as the user's question):"
+        "Respond in a single, friendly, and clear paragraph:"
     )
+
 
     return ai.call_openai_chatgpt(prompt, lang)

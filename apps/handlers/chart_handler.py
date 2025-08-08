@@ -10,12 +10,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-
+# Generate a category-wise expense summary chart (bar chart).
 def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetime, lang: str = "zh-TW") -> ImageMessage:
-    """
-    產生分類支出統計圖（長條圖）。
-    資料由 DB 端聚合：保留 0 金額類別，並依 categories.id 排序，含 id=0 的「未分類」。
-    """
+    
     rows = get_user_category_sums_for_chart(
         user_id=user_id,
         start_time=start_time,
@@ -28,7 +25,6 @@ def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetim
     labels = [r["category"] for r in rows]
     values = [float(r["total"] or 0) for r in rows]
 
-    # 若所有值都為 0，可視需求決定是否直接提示「沒有資料」
     if sum(values) == 0:
         raise ValueError(t("no_expense_data", lang))
 
@@ -58,14 +54,13 @@ def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetim
                     "font": {"size": 18}
                 },
                 "legend": {"display": False},
-                # 需要 datalabels 外掛
                 "datalabels": {
-                "anchor": "start",        # 錨點設在起點（長條底部）
-                "align": "end",           # 往下對齊
-                "offset": 20,             # 與長條保持距離（可調整）
+                "anchor": "start",        
+                "align": "end",           
+                "offset": 20,            
                 "formatter": "function(value) { return 'NTD ' + new Intl.NumberFormat().format(value); }",
                 "font": {"size": 12},
-                "color": "#000"           # 顏色
+                "color": "#000"           
             }
             },
             "scales": {
@@ -73,7 +68,6 @@ def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetim
                 "y": {"beginAtZero": True}
             }
         },
-        # QuickChart 啟用外掛
         "plugins": ["chartjs-plugin-datalabels"]
     }
 

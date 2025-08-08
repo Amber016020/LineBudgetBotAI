@@ -1,6 +1,82 @@
 from linebot.v3.messaging.models import FlexMessage
 from apps.common.i18n import t
 
+# --- paging helpers & carousel generators ---
+
+def _chunks(lst, size):
+    for i in range(0, len(lst or []), size):
+        yield lst[i:i+size]
+
+def generate_summary_carousel(
+    income, expense, balance,
+    records, summary_type, lang="zh-TW",
+    page_size=8
+):
+    """
+    將 summary 明細切成多頁（carousel）。最多 10 張 bubble（LINE 限制）。
+    """
+    pages = list(_chunks(records, page_size))[:10]
+    total_pages = max(1, len(pages))
+
+    # 沒資料時也給一張空頁
+    if not pages:
+        from linebot.v3.messaging.models import FlexMessage
+        empty = generate_summary_flex(
+            income, expense, balance,
+            records=[], summary_type=summary_type, lang=lang, max_detail_rows=page_size
+        )
+        return empty
+
+    bubbles = []
+    for idx, recs in enumerate(pages, start=1):
+        page_title = f"{summary_type} · {idx}/{total_pages}"
+        bubble_msg = generate_summary_flex(
+            income, expense, balance,
+            records=recs,
+            summary_type=page_title,
+            lang=lang,
+            max_detail_rows=page_size,
+            more_postback_data=None  # carousel 版本不放「查看更多」
+        )
+        bubbles.append(bubble_msg.contents)  # 取 bubble dict
+
+    from linebot.v3.messaging.models import FlexMessage
+    return FlexMessage.from_dict({
+        "type": "flex",
+        "altText": summary_type,
+        "contents": {"type": "carousel", "contents": bubbles}
+    })
+
+def flex_recent_records_carousel(records, lang="zh-TW", page_size=10):
+    """
+    將最近紀錄清單切成多頁（carousel）。最多 10 張 bubble（LINE 限制）。
+    """
+    from linebot.v3.messaging.models import FlexMessage
+    pages = list(_chunks(records, page_size))[:10]
+    if not pages:
+        return flex_recent_records([], lang)
+
+    bubbles = []
+    total_pages = len(pages)
+    for idx, recs in enumerate(pages, start=1):
+        bubble_msg = flex_recent_records(recs, lang)   # FlexMessage
+        bubble = bubble_msg.contents                    # bubble dict
+        # 在標題尾端加頁碼（安全 try）
+        try:
+            title_node = bubble["body"]["contents"][0]
+            if isinstance(title_node, dict) and title_node.get("type") == "text":
+                title_node["text"] = f'{title_node.get("text", "")} · {idx}/{total_pages}'
+        except Exception:
+            pass
+        bubbles.append(bubble)
+
+    return FlexMessage.from_dict({
+        "type": "flex",
+        "altText": t("recent_records_alt", lang),
+        "contents": {"type": "carousel", "contents": bubbles}
+    })
+
+
 def generate_summary_flex(
     income,
     expense,
@@ -25,24 +101,8 @@ def generate_summary_flex(
                 "type": "box",
                 "layout": "baseline",
                 "contents": [
-                    {"type": "text", "text": f"💰 {t('income', lang)}", "flex": 2},
-                    {"type": "text", "text": f"${income}", "flex": 3, "align": "end"}
-                ]
-            },
-            {
-                "type": "box",
-                "layout": "baseline",
-                "contents": [
                     {"type": "text", "text": f"💸 {t('expense', lang)}", "flex": 2},
                     {"type": "text", "text": f"${expense}", "flex": 3, "align": "end"}
-                ]
-            },
-            {
-                "type": "box",
-                "layout": "baseline",
-                "contents": [
-                    {"type": "text", "text": f"{t('balance', lang)}", "flex": 2},
-                    {"type": "text", "text": f"${balance}", "flex": 3, "align": "end"}
                 ]
             }
         ]
@@ -139,13 +199,13 @@ def flex_recent_records(records, lang):
 
         rows.append({
             "type": "box",
-            "layout": "horizontal",       # ← 回到 horizontal
+            "layout": "horizontal",      
             "spacing": "sm",
             "contents": [
                 { "type": "text", "text": f"{i}. {ellipsis(display_name, 18)}", "size": "sm", "flex": 7, "wrap": False },
                 { "type": "text", "text": ellipsis(amount_txt, 10), "size": "sm", "align": "end", "flex": 3 },
                 {
-                    "type": "image",      # ← 用 image，不用 icon
+                    "type": "image",   
                     "url": "https://cdn-icons-png.flaticon.com/512/1214/1214428.png",
                     "size": "xs",
                     "aspectRatio": "1:1",

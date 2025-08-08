@@ -8,23 +8,25 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from linebot.v3.messaging import (
     MessagingApi, ApiClient, Configuration, ReplyMessageRequest, TextMessage,
 )
-from linebot.v3.messaging.models import PostbackAction, ConfirmTemplate, TemplateMessage, FlexMessage
+from linebot.v3.messaging.models import FlexMessage, ImageMessage
 
 # === Common Utilities ===
-from apps.common.i18n import t, TEXTS
+from apps.common.i18n import t
 import apps.common.database as db
 
 # === handlers ===
-from apps.handlers.reply_service import generate_summary_flex,flex_recent_records
+from apps.handlers.reply_service import generate_summary_flex,flex_recent_records, generate_summary_carousel   
 from apps.handlers.chart_handler import generate_expense_chart
 
 # === Services ===
 from apps.services.category_classifier import classify_category_by_embedding
 from apps.services.nlp_router import route
 from apps.services.ai_financial_advisor import handle_ai_question 
+from apps.services.reply_service import get_main_quick_reply
+
+from config import ALLOWED_LANGS
 
 configuration = Configuration(access_token=os.getenv("CHANNEL_ACCESS_TOKEN"))
-ALLOWED_LANGS = {"zh-TW", "en"}
 
 MAX_TMPL_TEXT = 60
 MAX_TMPL_TITLE = 40
@@ -36,30 +38,36 @@ def clip(s: str, n: int) -> str:
     s = str(s or "")
     return s if len(s) <= n else s[: n - 1] + "…"
 
-def send_text(bot, event, text):
-    bot.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=text)]))
+def send_text(bot, event, text, lang="zh-TW"):
+    bot.reply_message(ReplyMessageRequest(
+        reply_token=event.reply_token,
+        messages=[
+            TextMessage(
+                text=text,
+                quick_reply=get_main_quick_reply(lang)  # 這裡加
+            )
+        ]
+    ))
 
-def send_flex(bot, event, flex: FlexMessage):
-    bot.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[flex]))
+def send_flex(bot, event, flex: FlexMessage, lang="zh-TW"):
+    flex.quick_reply = get_main_quick_reply(lang)
+    bot.reply_message(ReplyMessageRequest(
+        reply_token=event.reply_token,
+        messages=[flex]
+    ))
 
+def send_image(bot, event, image: ImageMessage, lang="zh-TW"):
+    image.quick_reply = get_main_quick_reply(lang)
+    bot.reply_message(ReplyMessageRequest(
+        reply_token=event.reply_token,
+        messages=[image]
+    ))
+    
 def canonical_lang(code: str | None) -> str | None:
     if not code: return None
     s = code.strip().replace("－", "-").replace("—", "-").replace("_", "-")
     s = "".join(re.findall(r"[A-Za-z\-]+", s)).lower()
     return {"zh-tw": "zh-TW", "en": "en"}.get(s)
-
-def get_confirm_template(text, keyword, category):
-    safe_text = clip(text, MAX_TMPL_TEXT)
-    return TemplateMessage(
-        alt_text=safe_text,
-        template=ConfirmTemplate(
-            text=safe_text,
-            actions=[
-                PostbackAction(label=clip("✅ 是", MAX_TMPL_LABEL), data=f"SYNC_CATEGORY_YES|{keyword}|{category}"),
-                PostbackAction(label=clip("❌ 否", MAX_TMPL_LABEL), data="SYNC_CATEGORY_NO"),
-            ],
-        ),
-    )
 
 def resolve_user_category(user_id: str, message: str) -> str | None:
     try:
@@ -81,7 +89,6 @@ def resolve_user_category(user_id: str, message: str) -> str | None:
     return None
 
 def period_from_label(label: str, now: datetime):
-    """label: week|month|year -> (start, end, human_label_key)"""
     if label == "week":
         start = now - timedelta(days=now.weekday())
         key = "week"
@@ -102,8 +109,8 @@ def do_check(user_id, event, lang, bot, **_):
         return send_text(bot, event, t("no_records", lang))
     return send_flex(bot, event, flex_recent_records(records, lang))
 
-def do_change_language(user_id, event, lang, bot, new_lang=None, **_):
-    nl = canonical_lang(new_lang)
+def do_change_language(user_id, event, lang, bot, **_):
+    nl = canonical_lang(lang)
     if nl and nl in ALLOWED_LANGS:
         db.set_user_language(user_id, nl)
         return send_text(bot, event, f"{t('language_changed', nl)} ({nl})")
@@ -111,42 +118,50 @@ def do_change_language(user_id, event, lang, bot, new_lang=None, **_):
 
 def do_chart(user_id, event, lang, bot, range=None, **_):
     if not range:
-        return send_text(bot, event, t("chart_range_hint", lang))
+        return send_text(bot, event, t("chart_range_hint", lang), lang=lang)
+
     now = datetime.now(timezone.utc)
     start, end, key = period_from_label(range, now)
     try:
         img = generate_expense_chart(user_id, start_time=start, end_time=end, lang=lang)
-        bot.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[img]))
+        return send_image(bot, event, img, lang=lang) 
     except ValueError:
-        send_text(bot, event, t("no_expense_in_range", lang).format(range=t(key, lang)))
+        return send_text(bot, event, t("no_expense_in_range", lang).format(range=t(key, lang)), lang=lang)
     except Exception as e:
         print(f"❌ Chart error: {e}")
-        send_text(bot, event, t("chart_failed", lang))
+        return send_text(bot, event, t("chart_failed", lang), lang=lang)
 
 def do_summary(user_id, event, lang, bot, range=None, **_):
     now = datetime.now(timezone.utc)
     start, end, key = period_from_label(range or "week", now)
     records = db.get_user_transactions(user_id, start_time=start, end_time=end)
-    sums = defaultdict(int)
-    for r in records:
-        cat = (r.get("category") or "").lower()
-        (sums["income"] if cat in ["收入", "income"] else sums.__setitem__)  # noop line to keep style
 
-    # explicit accumulate (avoid cleverness)
     sums = defaultdict(int)
     for r in records:
-        cat = (r.get("category") or "").lower()
-        if cat in ["收入", "income"]:
+        cat = (r.get("type") or "").lower()
+        if cat == "income":
             sums["income"] += r.get("amount", 0)
         else:
             sums["expense"] += r.get("amount", 0)
 
     income, expense = sums["income"], sums["expense"]
-    flex = generate_summary_flex(
-        income, expense, income - expense,
-        records=records, summary_type=t(key, lang), lang=lang
-    )
-    return send_flex(bot, event, flex)
+    summary_label = t(key, lang)
+
+    if len(records) > 8:
+        flex = generate_summary_carousel(
+            income, expense, income - expense,
+            records=records,
+            summary_type=summary_label,
+            lang=lang,
+            page_size=8
+        )
+    else:
+        flex = generate_summary_flex(
+            income, expense, income - expense,
+            records=records, summary_type=summary_label, lang=lang, max_detail_rows=8
+        )
+
+    return send_flex(bot, event, flex, lang=lang)
 
 _rec_pat = re.compile(r"^(.+?)\s*([+-]?\d+(?:,\d{3})*)(?:\s*(?:元|ntd))?$", re.IGNORECASE)
 
@@ -173,8 +188,6 @@ def do_record(user_id, event, lang, bot, text=None, rec_desc=None, rec_amt=None,
     return send_text(bot, event, t("recorded_item", lang).format(category = category_name, amount=rec_amt))
 
 def do_ai(user_id, event, lang, bot, text=None, **_):
-    print("do_ai")
-    """把看不懂的訊息交給 AI，並用使用者語言回覆。"""
     try:
         answer = handle_ai_question(user_id, text or "")
         return send_text(bot, event, answer)
@@ -182,8 +195,6 @@ def do_ai(user_id, event, lang, bot, text=None, **_):
         return send_text(bot, event, t("not_understood", lang))
 
 def do_unknown(user_id, event, lang, bot, text=None, **_):
-    print("do_unknown")
-    """保底：仍然丟給 AI（避免 dead-end）。"""
     return do_ai(user_id, event, lang, bot, text=text)
 
 # intent -> handler mapping
@@ -193,8 +204,8 @@ INTENT_MAP = {
     "chart": do_chart,
     "summary": do_summary,
     "record": do_record,
-    "ai": do_ai,            # ← 新增：AI intent
-    "unknown": do_unknown,  # ← unknown 也會轉到 AI
+    "ai": do_ai,           
+    "unknown": do_unknown, 
 }
 
 # ---------- main entry ----------
@@ -210,11 +221,9 @@ def handle_message(event: MessageEvent):
         bot = MessagingApi(api_client)
         r = route(text, lang) or {"intent": "unknown"}
         intent = r.get("intent", "unknown")
-        print("intent = " , intent)
         handler = INTENT_MAP.get(intent, do_unknown)
 
         try:
-            # 將 slots 與原始 text 都丟進 handler
             handler(user_id, event, lang, bot, **{**r, "text": text})
         except Exception as e:
             print(f"[handle_message] intent={intent} error={e}")

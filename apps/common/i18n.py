@@ -8,9 +8,13 @@ TEXTS = {
         "zh-TW": "查帳",
         "en": "Check"
     },
-    "summary": {
+    "week_summary": {
         "zh-TW": "本週總結",
         "en": "Weekly Summary"
+    },
+    "week_summary_bar": {
+        "zh-TW": "本週長條圖",
+        "en": "Weekly Summary bat"
     },
     "summary_title": {
         "zh-TW": "{summary_type} 總計",
