@@ -18,7 +18,7 @@ def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetim
     for r in transactions:
         category = r.get("category") or t("default_category", lang)
         amount = r.get("amount", 0)
-        # 跳過收入類型
+
         if category.lower() in [t("income", lang).lower()]:
             continue
         category_sums[category] = category_sums.get(category, 0) + amount
