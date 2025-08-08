@@ -1,6 +1,6 @@
 import re
 import numpy as np
-from apps.services.openai_embed import embed  # 你已經有 _embed，可共用
+from apps.services.openai_embed import embed 
 from apps.common.i18n import t
 
 _INTENTS = {
@@ -20,13 +20,9 @@ _INTENTS = {
         "show income/expense/balance summary; "
         "總結, 本週總結, 本月總結, 本年總結, 收支統計, 統計, 總覽"
     ),
-    "add_category": (
-        "add keyword to category mapping; "
-        "新增分類, 定義分類, 分類 關鍵字 = 類別, add category"
-    ),
-    "delete_category": (
-        "delete keyword mapping; "
-        "刪除分類, 刪除 關鍵字, delete category"
+     "add_category_quick": (
+        "quickly add a subcategory under a root; "
+        "新增 子類別, 新增 XXX, <大類>類別內細分<子類別>, 在娛樂底下新增訂閱, 在others底下新增孝親費"
     ),
     "record": (
         "record an expense like '早餐 60'; "
@@ -35,10 +31,37 @@ _INTENTS = {
         "星巴克 150, 看電影 300, 唱歌 600, switch 遊戲 1500, 感冒看醫生 300, 藥局 200, "
         "牙醫 800, 股票 5000, 基金 10000, 投資 2000, 房租 25000, 水費 600, 電費 900"
     ),
+    "ai": (
+        "general chat or question to AI; "
+        "我這週花最多錢的是什麼？, 這個月交通花多少？, 早餐平均花多少？, 幫我看看哪一類超支, "
+        "有沒有省錢建議, 近三個月趨勢, 我是不是喝太多手搖, 最高單筆是哪一筆, "
+        "把最近的娛樂支出列出來, 這週跟上週比較一下, 本月預算剩多少",
+        "幫我看看早餐平均花多少？"
+    ),
 }
 
 _THRESHOLD = 0.20  # intent similarity threshold
 _intent_vecs = None
+
+ROOT_KEYS = ["food", "investment", "transport", "entertainment", "shopping", "medical", "others"]
+
+def canonical_root_from_token(token: str, lang: str) -> str | None:
+    """
+    Map a user-typed root label (e.g., '娛樂' or 'entertainment') to a canonical root key.
+    """
+    tok = (token or "").strip().lower()
+    if not tok:
+        return None
+    for k in ROOT_KEYS:
+        if tok == k:
+            return k
+    for k in ROOT_KEYS:
+        try:
+            if tok == (t(k, lang) or "").strip().lower():
+                return k
+        except Exception:
+            pass
+    return None
 
 def _cos(a, b):
     den = (np.linalg.norm(a) * np.linalg.norm(b))
@@ -77,25 +100,56 @@ def parse_slots(text: str, lang: str):
     rec_desc = m_rec.group(1) if m_rec else None
     rec_amt = int(m_rec.group(2)) if m_rec else None
 
+    # --- NEW: quick add subcategory ---
+    # 1) "新增 孝親費"  -> parent others
+    m_quick_default = re.match(r"^\s*新增\s+(\S+)\s*$", text)
+    add_child_name = None
+    add_parent_key = None
+    if m_quick_default:
+        add_child_name = m_quick_default.group(1).strip()
+        add_parent_key = "others"
+
+    # 2) "娛樂類別內細分訂閱" -> parent = entertainment, child = 訂閱
+    m_quick_scoped = re.match(r"^\s*(\S+?)類別內細分(\S+)\s*$", text)
+    if m_quick_scoped:
+        parent_token = m_quick_scoped.group(1).strip()
+        add_child_name = m_quick_scoped.group(2).strip()
+        add_parent_key = canonical_root_from_token(parent_token, lang) or "others"
+
     return {
         "range": rng, "new_lang": new_lang,
         "add_kw": add_kw, "add_cat": add_cat,
         "del_kw": del_kw,
         "rec_desc": rec_desc, "rec_amt": rec_amt,
+        # new slots:
+        "add_parent_key": add_parent_key,
+        "add_child_name": add_child_name,
     }
 
 def route(text: str, lang: str):
     _ensure_intents()
+    slots = parse_slots(text, lang)
+
+    # 先處理「快速新增子類別」
+    if slots.get("add_parent_key") and slots.get("add_child_name"):
+        return {
+            "intent": "add_category_quick",
+            "parent_key": slots["add_parent_key"],
+            "child_name": slots["add_child_name"],
+            **slots,
+            "score": 1.0
+        }
+
     v = np.array(embed([text])[0], dtype=np.float32)
     best, sim = "unknown", -1.0
     for name, vec in _intent_vecs.items():
         s = _cos(v, vec)
         if s > sim:
             best, sim = name, s
-    slots = parse_slots(text, lang)
+
     if sim < _THRESHOLD:
-        # 邊界：若完全不像任何意圖，但有記帳格式就當 record
         if slots["rec_desc"] and slots["rec_amt"] is not None:
             return {"intent": "record", **slots, "score": sim}
-        return {"intent": "unknown", **slots, "score": sim}
+        return {"intent": "ai", **slots, "score": sim}
+
     return {"intent": best, **slots, "score": sim}

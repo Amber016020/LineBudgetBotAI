@@ -13,3 +13,4 @@ def handle_follow(event: FollowEvent):
         line_bot_api = MessagingApi(api_client)
         profile = line_bot_api.get_profile(user_id)
         db.ensure_user_exists(user_id, profile.display_name)
+        db.ensure_default_categories(user_id)

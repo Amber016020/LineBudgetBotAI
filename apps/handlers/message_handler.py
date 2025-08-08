@@ -14,11 +14,14 @@ from linebot.v3.messaging.models import PostbackAction, ConfirmTemplate, Templat
 from apps.common.i18n import t, TEXTS
 import apps.common.database as db
 
+# === handlers ===
+from apps.handlers.reply_service import generate_summary_flex,flex_recent_records
+from apps.handlers.chart_handler import generate_expense_chart
+
 # === Services ===
 from apps.services.category_classifier import classify_category_by_embedding
 from apps.services.nlp_router import route
-from apps.handlers.reply_service import generate_summary_flex
-from apps.handlers.chart_handler import generate_expense_chart
+from apps.services.ai_financial_advisor import handle_ai_question 
 
 configuration = Configuration(access_token=os.getenv("CHANNEL_ACCESS_TOKEN"))
 ALLOWED_LANGS = {"zh-TW", "en"}
@@ -60,13 +63,21 @@ def get_confirm_template(text, keyword, category):
 
 def resolve_user_category(user_id: str, message: str) -> str | None:
     try:
-        user_map = db.get_user_categories(user_id) or {}
+        pairs = db.get_user_categories(user_id)  # [(keyword, root_category), ...]
     except Exception:
-        user_map = {}
-    mlow = message.lower()
-    for kw, cat in user_map.items():
-        if kw.lower() in mlow:
-            return cat
+        pairs = []
+
+    mlow = (message or "").lower().strip()
+    if not mlow:
+        return None
+
+    # simple substring match; you can upgrade to tokenized or regex-based matching later
+    for keyword, root_cat in pairs:
+        if not keyword:
+            continue
+        if keyword.lower() in mlow:
+            return root_cat
+
     return None
 
 def period_from_label(label: str, now: datetime):
@@ -82,54 +93,6 @@ def period_from_label(label: str, now: datetime):
         key = "year"
     start = start.replace(hour=0, minute=0, second=0, microsecond=0)
     return start, now, key
-
-def flex_recent_records(records, lang):
-    def ellipsis(s, n): 
-        s = str(s or "")
-        return s if len(s) <= n else s[:n-1] + "…"
-
-    MAX_ROWS = 10
-    rows = []
-    for i, r in enumerate(records[:MAX_ROWS], start=1):
-        raw_cat = (r.get("category") or "").strip()
-        name = t(raw_cat, lang) if raw_cat else t("uncategorized", lang)
-        amount_txt = str(r.get("amount", ""))
-
-        # 一列：序號+類別 | 金額 | 刪除按鈕
-        rows.append({
-            "type": "box",
-            "layout": "horizontal",
-            "spacing": "sm",
-            "contents": [
-                { "type": "text", "text": f"{i}. {ellipsis(name, 12)}", "size": "sm", "flex": 5 },
-                { "type": "text", "text": ellipsis(amount_txt, 10), "size": "sm", "align": "end", "flex": 3 },
-                {
-                    "type": "button",
-                    "style": "secondary",
-                    "height": "sm",
-                    "flex": 3,
-                    "action": { "type": "postback", "label": t("delete_short", lang), "data": f"delete_{i}" }
-                }
-            ]
-        })
-
-    bubble = {
-        "type": "bubble",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "md",
-            "contents": [
-                { "type": "text", "text": t("recent_records_title", lang), "weight": "bold", "size": "lg" },
-                *rows
-            ]
-        }
-    }
-    return FlexMessage.from_dict({
-        "type": "flex",
-        "altText": t("recent_records_alt", lang),
-        "contents": bubble
-    })
 
 
 # ---------- intent handlers ----------
@@ -185,33 +148,6 @@ def do_summary(user_id, event, lang, bot, range=None, **_):
     )
     return send_flex(bot, event, flex)
 
-def do_add_category(user_id, event, lang, bot, text=None, **_):
-    all_prefixes = TEXTS["add_category_prefixes"]["zh-TW"] + TEXTS["add_category_prefixes"]["en"]
-    prefix_pattern = "|".join(re.escape(p) for p in all_prefixes)
-    m = re.match(rf"({prefix_pattern})\s*(\S+)\s*=\s*(\S+)", text or "", re.IGNORECASE)
-    if not m:
-        return send_text(bot, event, t("category_add_format_error", lang))
-    kw, cat = m.group(2).lower(), m.group(3).lower()
-    db.delete_user_category(user_id, kw)
-    db.add_user_category(user_id, kw, cat)
-    bot.reply_message(ReplyMessageRequest(
-        reply_token=event.reply_token,
-        messages=[
-            TextMessage(text=t("category_added", lang).format(keyword=kw, category=cat)),
-            get_confirm_template(text=t("category_sync_prompt", lang).format(keyword=kw, category=cat), keyword=kw, category=cat),
-        ]
-    ))
-
-def do_delete_category(user_id, event, lang, bot, text=None, **_):
-    all_prefixes = TEXTS["delete_category_prefixes"]["zh-TW"] + TEXTS["delete_category_prefixes"]["en"]
-    prefix_pattern = "|".join(re.escape(p) for p in all_prefixes)
-    m = re.match(rf"({prefix_pattern})\s*(\S+)", text or "", re.IGNORECASE)
-    if not m:
-        return send_text(bot, event, t("category_delete_format_error", lang))
-    kw = m.group(2).lower()
-    db.delete_user_category(user_id, kw)
-    return send_text(bot, event, t("category_deleted", lang).format(keyword=kw))
-
 _rec_pat = re.compile(r"^(.+?)\s*([+-]?\d+(?:,\d{3})*)(?:\s*(?:元|ntd))?$", re.IGNORECASE)
 
 def do_record(user_id, event, lang, bot, text=None, rec_desc=None, rec_amt=None, **_):
@@ -221,12 +157,35 @@ def do_record(user_id, event, lang, bot, text=None, rec_desc=None, rec_amt=None,
         if not m:
             return send_text(bot, event, t("not_understood", lang))
         rec_desc, rec_amt = m.group(1), int(m.group(2).replace(",", ""))
-    cat = resolve_user_category(user_id, rec_desc) or classify_category_by_embedding(rec_desc)
-    db.insert_transactions(user_id, cat, rec_amt, text or f"{rec_desc} {rec_amt}")
-    return send_text(bot, event, t("recorded_item", lang).format(category=t(cat, lang), amount=rec_amt))
 
-def do_unknown(user_id, event, lang, bot, **_):
-    return send_text(bot, event, t("not_understood", lang))
+    item = rec_desc.strip()
+    category_info = classify_category_by_embedding(item)
+    category_name = category_info.get(lang, category_info["key"])
+    category_id = db.get_user_category_id(user_id, category_name)
+    db.insert_transactions(
+        user_id,
+        category_id=category_id,
+        item=item,
+        amount=rec_amt,
+        message=text or f"{item} {rec_amt}"
+    )
+
+    return send_text(bot, event, t("recorded_item", lang).format(category = category_name, amount=rec_amt))
+
+def do_ai(user_id, event, lang, bot, text=None, **_):
+    print("do_ai")
+    """把看不懂的訊息交給 AI，並用使用者語言回覆。"""
+    try:
+        answer = handle_ai_question(user_id, text or "")
+        return send_text(bot, event, answer)
+    except Exception as e:
+        print(f"[do_ai] error: {e}")
+        return send_text(bot, event, t("not_understood", lang))
+
+def do_unknown(user_id, event, lang, bot, text=None, **_):
+    print("do_unknown")
+    """保底：仍然丟給 AI（避免 dead-end）。"""
+    return do_ai(user_id, event, lang, bot, text=text)
 
 # intent -> handler mapping
 INTENT_MAP = {
@@ -234,10 +193,9 @@ INTENT_MAP = {
     "change_language": do_change_language,
     "chart": do_chart,
     "summary": do_summary,
-    "add_category": do_add_category,
-    "delete_category": do_delete_category,
     "record": do_record,
-    "unknown": do_unknown,
+    "ai": do_ai,            # ← 新增：AI intent
+    "unknown": do_unknown,  # ← unknown 也會轉到 AI
 }
 
 # ---------- main entry ----------
@@ -253,12 +211,12 @@ def handle_message(event: MessageEvent):
         bot = MessagingApi(api_client)
         r = route(text, lang) or {"intent": "unknown"}
         intent = r.get("intent", "unknown")
+        print("intent = " , intent)
         handler = INTENT_MAP.get(intent, do_unknown)
 
-        # Pass all slots to handler; handlers ignore unused keys
         try:
+            # 將 slots 與原始 text 都丟進 handler
             handler(user_id, event, lang, bot, **{**r, "text": text})
         except Exception as e:
-            # One last safety net
             print(f"[handle_message] intent={intent} error={e}")
             send_text(bot, event, t("not_understood", lang))

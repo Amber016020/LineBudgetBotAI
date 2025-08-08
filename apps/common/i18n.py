@@ -32,7 +32,10 @@ TEXTS = {
         "zh-TW": "收入",
         "en": "Income",
     },
-    # 查帳相關
+    "balance": {
+        "zh-TW": "結餘",
+        "en": "Balance",
+    },
     "no_records": {
         "zh-TW": "目前沒有任何記帳紀錄。",
         "en": "No records found.",
@@ -105,9 +108,17 @@ TEXTS = {
         "zh-TW": "已刪除分類：{keyword}",
         "en": "Category deleted: {keyword}"
     },
-    "category_add_format_error": {
-        "zh-TW": "❗格式錯誤，請使用：新增分類：關鍵字=分類",
-        "en": "❗Invalid format. Please use: add category: keyword=category"
+    "category_added_under": {
+        "zh-TW": "已將分類「{child}」新增到「{parent}」底下",
+        "en": "Category '{child}' has been added under '{parent}'"
+    },
+    "category_root_not_found": {
+        "zh-TW": "找不到根分類：{category}",
+        "en": "Root category not found: {category}"
+    },
+    "category_add_failed": {
+        "zh-TW": "新增分類失敗，請稍後再試",
+        "en": "Failed to add category. Please try again later"
     },
     "category_delete_format_error": {
         "zh-TW": "❗格式錯誤，請使用：刪除分類：關鍵字",
