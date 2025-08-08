@@ -155,7 +155,7 @@ def do_record(user_id, event, lang, bot, text=None, rec_desc=None, rec_amt=None,
     if rec_desc is None or rec_amt is None:
         m = _rec_pat.match((text or "").strip())
         if not m:
-            return send_text(bot, event, t("not_understood", lang))
+            return do_ai(user_id, event, lang, bot, text=text)
         rec_desc, rec_amt = m.group(1), int(m.group(2).replace(",", ""))
 
     item = rec_desc.strip()
@@ -179,7 +179,6 @@ def do_ai(user_id, event, lang, bot, text=None, **_):
         answer = handle_ai_question(user_id, text or "")
         return send_text(bot, event, answer)
     except Exception as e:
-        print(f"[do_ai] error: {e}")
         return send_text(bot, event, t("not_understood", lang))
 
 def do_unknown(user_id, event, lang, bot, text=None, **_):
@@ -219,4 +218,4 @@ def handle_message(event: MessageEvent):
             handler(user_id, event, lang, bot, **{**r, "text": text})
         except Exception as e:
             print(f"[handle_message] intent={intent} error={e}")
-            send_text(bot, event, t("not_understood", lang))
+            send_text(bot, event, t("", lang))

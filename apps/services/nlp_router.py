@@ -39,6 +39,10 @@ _INTENTS = {
         "幫我看看早餐平均花多少？"
         "你是誰, 你可以做什麼, 你有什麼功能, 你會什麼, 你能幹嘛, 你支援什麼, 使用說明, 幫助, 幫我介紹功能, "
         "help, what can you do, who are you, what are your features, capabilities, how to use"
+    ),
+    "unknown": (
+        "fallback for unrecognized input; "
+        "無法辨識, 不知道, 看不懂, 亂打, 其他"
     )
 }
 
