@@ -37,6 +37,8 @@ _INTENTS = {
         "有沒有省錢建議, 近三個月趨勢, 我是不是喝太多手搖, 最高單筆是哪一筆, "
         "把最近的娛樂支出列出來, 這週跟上週比較一下, 本月預算剩多少, "
         "幫我看看早餐平均花多少？"
+        "你是誰, 你可以做什麼, 你有什麼功能, 你會什麼, 你能幹嘛, 你支援什麼, 使用說明, 幫助, 幫我介紹功能, "
+        "help, what can you do, who are you, what are your features, capabilities, how to use"
     )
 }
 
