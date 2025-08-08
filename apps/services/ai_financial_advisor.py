@@ -7,9 +7,6 @@ def handle_ai_question(user_id, question):
     transactions = db.get_user_transactions(user_id)  
     lang = db.get_user_language(user_id)  
 
-    if not transactions:
-        return t("no_transaction_data", lang)
-
     # Format transactions into readable lines
     context_lines = []
     for t_data in transactions:
