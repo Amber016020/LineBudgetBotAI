@@ -10,7 +10,7 @@ configuration = Configuration(access_token=os.getenv("CHANNEL_ACCESS_TOKEN"))
 def handle_postback(event: PostbackEvent):
     user_id = event.source.user_id
     data = event.postback.data
-
+    lang = db.get_user_language(user_id)
     with ApiClient(configuration) as api_client:
         bot = MessagingApi(api_client)
 

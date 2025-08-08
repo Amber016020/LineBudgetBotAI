@@ -70,8 +70,12 @@ TEXTS = {
         "en": "❗Invalid format. Please use: add category: keyword=category"
     },
     "delete_category_prefixes": {
-    "zh-TW": ["刪除分類："],
-    "en": ["delete category:"]
+        "zh-TW": ["刪除分類："],
+        "en": ["delete category:"]
+    },
+    "delete_short": { 
+        "zh-TW": "刪除", 
+        "en": "Delete" 
     },
     "category_deleted": {
         "zh-TW": "✅ 已刪除分類：{keyword}",

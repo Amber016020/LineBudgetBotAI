@@ -23,7 +23,16 @@ from apps.handlers.chart_handler import generate_expense_chart
 configuration = Configuration(access_token=os.getenv("CHANNEL_ACCESS_TOKEN"))
 ALLOWED_LANGS = {"zh-TW", "en"}
 
+MAX_TMPL_TEXT = 60
+MAX_TMPL_TITLE = 40
+MAX_TMPL_LABEL = 20
+MAX_FLEX_ALT = 300  
+
 # ---------- helpers ----------
+def clip(s: str, n: int) -> str:
+    s = str(s or "")
+    return s if len(s) <= n else s[: n - 1] + "…"
+
 def send_text(bot, event, text):
     bot.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=text)]))
 
@@ -37,13 +46,14 @@ def canonical_lang(code: str | None) -> str | None:
     return {"zh-tw": "zh-TW", "en": "en"}.get(s)
 
 def get_confirm_template(text, keyword, category):
+    safe_text = clip(text, MAX_TMPL_TEXT)
     return TemplateMessage(
-        alt_text=text,
+        alt_text=safe_text,
         template=ConfirmTemplate(
-            text=text,
+            text=safe_text,
             actions=[
-                PostbackAction(label="✅ 是", data=f"SYNC_CATEGORY_YES|{keyword}|{category}"),
-                PostbackAction(label="❌ 否", data="SYNC_CATEGORY_NO"),
+                PostbackAction(label=clip("✅ 是", MAX_TMPL_LABEL), data=f"SYNC_CATEGORY_YES|{keyword}|{category}"),
+                PostbackAction(label=clip("❌ 否", MAX_TMPL_LABEL), data="SYNC_CATEGORY_NO"),
             ],
         ),
     )
@@ -74,29 +84,53 @@ def period_from_label(label: str, now: datetime):
     return start, now, key
 
 def flex_recent_records(records, lang):
-    def ellipsis(s, n): s = str(s or ""); return s if len(s) <= n else s[:n-1] + "…"
+    def ellipsis(s, n): 
+        s = str(s or "")
+        return s if len(s) <= n else s[:n-1] + "…"
+
+    MAX_ROWS = 10
     rows = []
-    for i, r in enumerate(records[:10], start=1):
+    for i, r in enumerate(records[:MAX_ROWS], start=1):
         raw_cat = (r.get("category") or "").strip()
         name = t(raw_cat, lang) if raw_cat else t("uncategorized", lang)
+        amount_txt = str(r.get("amount", ""))
+
+        # 一列：序號+類別 | 金額 | 刪除按鈕
         rows.append({
-            "type": "box", "layout": "horizontal",
+            "type": "box",
+            "layout": "horizontal",
+            "spacing": "sm",
             "contents": [
-                {"type": "text", "text": f"{i}. {ellipsis(name, 14)}", "size": "sm", "flex": 3},
-                {"type": "text", "text": str(r.get("amount", "")), "size": "sm", "align": "end", "flex": 1},
+                { "type": "text", "text": f"{i}. {ellipsis(name, 12)}", "size": "sm", "flex": 5 },
+                { "type": "text", "text": ellipsis(amount_txt, 10), "size": "sm", "align": "end", "flex": 3 },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "flex": 3,
+                    "action": { "type": "postback", "label": t("delete_short", lang), "data": f"delete_{i}" }
+                }
             ]
         })
-    actions = [{
-        "type": "button", "style": "secondary", "height": "sm",
-        "action": {"type": "postback", "label": t("delete_nth", lang).format(n=i), "data": f"delete_{i}"}
-    } for i in range(1, min(len(records), 4) + 1)]
+
     bubble = {
         "type": "bubble",
-        "body": {"type": "box", "layout": "vertical", "spacing": "md",
-                 "contents": [{"type": "text", "text": t("recent_records_title", lang), "weight": "bold", "size": "lg"}, *rows]},
-        "footer": {"type": "box", "layout": "vertical", "spacing": "sm", "contents": actions}
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                { "type": "text", "text": t("recent_records_title", lang), "weight": "bold", "size": "lg" },
+                *rows
+            ]
+        }
     }
-    return FlexMessage.from_dict({"type": "flex", "altText": t("recent_records_alt", lang), "contents": bubble})
+    return FlexMessage.from_dict({
+        "type": "flex",
+        "altText": t("recent_records_alt", lang),
+        "contents": bubble
+    })
+
 
 # ---------- intent handlers ----------
 def do_check(user_id, event, lang, bot, **_):
