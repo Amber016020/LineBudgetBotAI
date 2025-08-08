@@ -7,3 +7,4 @@ storage3
 supabase
 plotly>=5.16.1
 kaleido>=0.2.1
+quickchart.io

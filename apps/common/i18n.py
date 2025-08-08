@@ -12,7 +12,10 @@ TEXTS = {
         "zh-TW": "本週總結",
         "en": "Weekly Summary"
     },
-    
+    "summary_title": {
+        "zh-TW": "{summary_type} 總計",
+        "en": "{summary_type} Summary"
+    },
     "choose_type": {
         "zh-TW": "請問這筆是支出還是收入？",
         "en": "Is this an Expense or Income?",
@@ -78,6 +81,10 @@ TEXTS = {
         "zh-TW": "❗格式錯誤，請使用：刪除分類：關鍵字",
         "en": "❗Format error. Please use: delete category: keyword"
     },
+    "change_language_prefixes": {
+        "zh-TW": ["語言", "切換語言"],
+        "en": ["language", "lang"]
+    },
     "record_line_format": {
         "zh-TW": "{date}｜{category}｜{amount} 元｜原始輸入：{message}",
         "en": "{date} | {category} | {amount} NTD | Input: {message}"
@@ -117,6 +124,30 @@ TEXTS = {
     "year": {
         "zh-TW": "年",
         "en": "year"
+    },
+    "food": {
+        "zh-TW": "餐飲",
+        "en": "Food & Drinks"
+    },
+    "transport": {
+        "zh-TW": "交通",
+        "en": "Transport"
+    },
+    "entertainment": {
+        "zh-TW": "娛樂",
+        "en": "Entertainment"
+    },
+    "shopping": {
+        "zh-TW": "購物",
+        "en": "Shopping"
+    },
+    "medical": {
+        "zh-TW": "醫療",
+        "en": "Medical"
+    },
+    "others": {
+        "zh-TW": "其他",
+        "en": "Others"
     },
     "no_records_in_range": {
         "zh-TW": "{summary_type}內沒有紀錄喔！",

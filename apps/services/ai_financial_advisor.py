@@ -1,12 +1,11 @@
 import apps.services.call_openai_chatgpt as ai
 import apps.common.database as db
 from apps.common.i18n import t
-from apps.common.lang_utils import detect_lang_by_text
 
 # Generate financial insights from user transactions using AI
 def handle_ai_question(user_id, question):
     transactions = db.get_user_transactions(user_id)  
-    lang = detect_lang_by_text(question)  
+    lang = db.get_user_language(user_id)  
 
     if not transactions:
         return t("no_transaction_data", lang)
@@ -41,4 +40,4 @@ def handle_ai_question(user_id, question):
         "\nPlease answer in a single, friendly, and clear paragraph (using the same language as the user's question):"
     )
 
-    return ai.call_openai_chatgpt(prompt)
+    return ai.call_openai_chatgpt(prompt, lang)

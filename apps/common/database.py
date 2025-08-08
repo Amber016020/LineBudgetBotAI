@@ -16,7 +16,10 @@ def ensure_user_exists(user_id, display_name=None):
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM users WHERE line_user_id = %s", (user_id,))
         if cur.fetchone() is None:
-            cur.execute("INSERT INTO users (line_user_id, display_name) VALUES (%s, %s)", (user_id, display_name))
+            cur.execute(
+                "INSERT INTO users (line_user_id, display_name, preferred_lang) VALUES (%s, %s, %s)",
+                (user_id, display_name, "zh-TW")
+            )
 
 # Retrieve the internal UUID of the user from LINE user ID
 def get_user_uuid(user_id):
@@ -24,6 +27,21 @@ def get_user_uuid(user_id):
         cur.execute("SELECT id FROM users WHERE line_user_id = %s", (user_id,))
         result = cur.fetchone()
         return result[0] if result else None
+    
+# Retrieve the preferred language of the user
+def get_user_language(user_id):
+    with conn.cursor() as cur:
+        cur.execute("SELECT preferred_lang FROM users WHERE line_user_id = %s", (user_id,))
+        result = cur.fetchone()
+        return result[0] if result else None
+    
+# Update the preferred language of the user
+def set_user_language(user_id, lang_code):
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE users SET preferred_lang = %s WHERE line_user_id = %s",
+            (lang_code, user_id)
+        )
 
 # Insert a new transaction (income or expense)
 def insert_transactions(user_id, category, amount, message, display_name=None, record_type='expense'):

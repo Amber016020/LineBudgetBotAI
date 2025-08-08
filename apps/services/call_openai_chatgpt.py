@@ -1,11 +1,10 @@
 from openai import OpenAI
-from apps.common.lang_utils import detect_lang_by_text
 from apps.common.i18n import t
 import os
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             
-def call_openai_chatgpt(prompt):
+def call_openai_chatgpt(prompt, lang):
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -23,5 +22,4 @@ def call_openai_chatgpt(prompt):
         return response.choices[0].message.content.strip()
     except Exception as e:
         print("OpenAI Error:", e)
-        lang = detect_lang_by_text(prompt)
         return t("openai_error", lang)

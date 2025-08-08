@@ -1,38 +1,22 @@
 import os
-import tempfile
 from datetime import datetime
-import plotly.graph_objects as go
 from supabase import create_client
 from storage3.types import FileOptions
 from linebot.v3.messaging.models import ImageMessage
 from apps.common.database import get_user_transactions
 from apps.common.i18n import t
+from quickchart import QuickChart
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def delete_old_charts_for_user(user_id: str):
-    files = supabase.storage.from_("charts").list()
-    to_delete = [f["name"] for f in files if f["name"].startswith(f"chart_{user_id}_")]
-    if to_delete:
-        supabase.storage.from_("charts").remove(to_delete)
-
-def upload_chart_to_supabase(local_file_path, user_id):
-    delete_old_charts_for_user(user_id) 
-    file_name = f"chart_{user_id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.png"
-    with open(local_file_path, "rb") as f:
-        supabase.storage.from_("charts").upload(
-            path=file_name,
-            file=f,
-            file_options=FileOptions(content_type="image/png")
-        )
-    return f"{SUPABASE_URL}/storage/v1/object/public/charts/{file_name}"
 
 def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetime, lang: str = "zh-TW") -> ImageMessage:
     transactions = get_user_transactions(user_id, start_time=start_time, end_time=end_time)
     category_sums = {}
-    
+
+    # Sum expenses by category
     for r in transactions:
         category = r.get("category") or t("default_category", lang)
         amount = r.get("amount", 0)
@@ -43,37 +27,52 @@ def generate_expense_chart(user_id: str, start_time: datetime, end_time: datetim
     if not category_sums:
         raise ValueError(t("no_expense_data", lang))
 
-    categories = list(category_sums.keys())
-    values = list(category_sums.values())
+    # Configure QuickChart
+    qc = QuickChart()
+    qc.width = 600
+    qc.height = 400
+    qc.background_color = "#ffffff"
 
-    fig = go.Figure(
-        data=[
-            go.Bar(
-                x=categories,
-                y=values,
-                text=[f"NTD {int(v):,}" for v in values],
-                textposition="outside",
-                marker_color="LightSkyBlue"
-            )
-        ]
-    )
+    qc.config = {
+        "type": "bar",
+        "data": {
+            "labels": list(category_sums.keys()),
+            "datasets": [{
+                "label": t("expense_chart_ylabel", lang),
+                "data": list(category_sums.values()),
+                "backgroundColor": "rgba(54, 162, 235, 0.5)",
+                "borderColor": "rgb(54, 162, 235)",
+                "borderWidth": 1
+            }]
+        },
+        "options": {
+            "plugins": {
+                "title": {
+                    "display": True,
+                    "text": t("expense_chart_title", lang),
+                    "font": {"size": 18}
+                },
+                "legend": {"display": False},
+                "datalabels": {
+                    "anchor": "end",
+                    "align": "end",
+                    "formatter": "function(value) { return 'NTD ' + new Intl.NumberFormat().format(value); }",
+                    "font": {"size": 12}
+                }
+            },
+            "scales": {
+                "x": {
+                    "ticks": {"font": {"family": "sans-serif"}}
+                }
+            }
+        }
+    }
 
-    fig.update_layout(
-        title=t("expense_chart_title", lang),
-        yaxis_title=t("expense_chart_ylabel", lang),
-        xaxis_tickangle=-30,
-        margin=dict(l=40, r=20, t=50, b=100),
-        font=dict(family="Microsoft JhengHei", size=12)
-    )
+    # Get chart image URL from QuickChart
+    chart_url = qc.get_url()
 
-    # 儲存為 PNG
-    tmp_path = os.path.join(tempfile.gettempdir(), f"expense_chart_{user_id}.png")
-    fig.write_image(tmp_path, format="png", engine="kaleido")
-
-    public_url = upload_chart_to_supabase(tmp_path, user_id)
-    os.remove(tmp_path)
-
+    # Send image directly to LINE
     return ImageMessage(
-        original_content_url=public_url,
-        preview_image_url=public_url
+        original_content_url=chart_url,
+        preview_image_url=chart_url
     )

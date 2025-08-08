@@ -17,7 +17,6 @@ from linebot.v3.messaging.models import (
 
 # === Common Utilities ===
 from apps.common.i18n import t, TEXTS
-from apps.common.lang_utils import detect_lang_by_text
 import apps.common.database as db
 
 # === Services ===
@@ -28,8 +27,7 @@ from apps.services.category_classifier import classify_category
 # === Handlers ===
 from apps.handlers.command_utils import normalize_command
 from apps.handlers.reply_service import (
-    generate_summary_flex,
-    generate_detail_list_flex,
+    generate_summary_flex
 )
 from apps.handlers.chart_handler import generate_expense_chart
 
@@ -44,7 +42,7 @@ def handle_message(event: MessageEvent):
     user_id = event.source.user_id
     text = event.message.text.strip()
     command = normalize_command(text)
-    lang = detect_lang_by_text(text) 
+    lang = db.get_user_language(user_id) 
     print(text)
     with ApiClient(configuration) as api_client:
         bot = MessagingApi(api_client)
@@ -75,6 +73,24 @@ def handle_message(event: MessageEvent):
                 reply_token=event.reply_token,
                 messages=[TemplateMessage(alt_text=t("recent_records_alt", lang), template=template)]
             ))
+            
+        # === 新增：修改偏好語言 ===
+        elif matches_command_prefix(text, lang, "change_language_prefixes"):
+            # 假設 TEXTS["change_language_prefixes"] = {"zh-TW": ["語言", "切換語言"], "en": ["language", "lang"]}
+            parts = text.split()
+            if len(parts) >= 2:
+                new_lang = parts[1]
+                db.set_user_language(user_id, new_lang)
+                bot.reply_message(ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=f"{t('language_changed', new_lang)} ({new_lang})")]
+                ))
+            else:
+                bot.reply_message(ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=t("language_change_format_error", lang))]
+                ))
+            return
         
         # Requests an expense chart
         elif any(kw in text for kw in ["支出圖", "chart", "週支出圖", "月支出圖", "年支出圖"]):
@@ -116,39 +132,6 @@ def handle_message(event: MessageEvent):
                     reply_token=event.reply_token,
                     messages=[TextMessage(text="圖表生成失敗，請稍後再試")]
                 ))
-
-        # Requests detailed transaction records for this week/month/year
-        elif command in ["weekly_details", "monthly_details", "yearly_details"]:
-            now = datetime.now(timezone.utc)
-
-            if command == "weekly_details":
-                start_time = now - timedelta(days=now.weekday())  # 本週一
-                summary_type = "週"
-            elif command == "monthly_details":
-                start_time = now.replace(day=1)  # 本月第一天
-                summary_type = "月"
-            elif command == "yearly_details":
-                start_time = now.replace(month=1, day=1)  # 本年元旦
-                summary_type = "年"
-
-            # 清除時分秒，避免查不到資料
-            start_time = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
-
-            records = db.get_user_transactions(user_id, start_time=start_time, end_time=now)
-
-            if not records:
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=f"{summary_type}內沒有紀錄喔！", quick_reply=get_main_quick_reply())]
-                ))
-                return
-
-            flex_msg = generate_detail_list_flex(records, summary_type)
-
-            bot.reply_message(ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[flex_msg]
-            ))
 
         # Requests a summary of expenses and income
         elif command in ["summary", "weekly", "monthly", "yearly"]:
@@ -252,10 +235,10 @@ def handle_message(event: MessageEvent):
                 amount = int(match.group(2))
                 category = classify_category(message)
                 db.insert_transactions(user_id, category, amount, text)
-
+                category_name = t(category, lang) 
                 bot.reply_message(ReplyMessageRequest(
                     reply_token=event.reply_token,
-                    messages=[TextMessage(text=t("recorded_item", lang).format(category=category, amount=amount))]
+                    messages=[TextMessage(text=t("recorded_item", lang).format(category=category_name, amount=amount))]
                 ))
             else:
                 # 其餘的句子（不符合金額格式），一律丟給 AI 處理
