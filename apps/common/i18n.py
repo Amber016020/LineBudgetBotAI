@@ -129,6 +129,10 @@ TEXTS = {
         "zh-TW": "餐飲",
         "en": "Food & Drinks"
     },
+    "investment": {
+        "zh-TW": "投資",
+        "en": "Investment"
+    },
     "transport": {
         "zh-TW": "交通",
         "en": "Transport"
@@ -176,6 +180,50 @@ TEXTS = {
     "no_expense_data": {
         "zh-TW": "沒有支出資料",
         "en": "No expense data available"
+    },
+    "chart_range_hint": {
+        "zh-TW": "請輸入有效的區間，例如：支出圖 週 / 月 / 年",
+        "en": "Please enter a valid range, e.g., chart week / month / year"
+    },
+    "language_not_supported": {
+        "zh-TW": "不支援該語言代碼，請使用 zh-TW 或 en",
+        "en": "Unsupported language code. Please use zh-TW or en"
+    },
+    "language_change_format_error": {
+        "zh-TW": "請輸入語言代碼，例如：語言 zh-TW",
+        "en": "Please specify a language code, e.g., language en"
+    },
+    "not_understood": {
+        "zh-TW": "我暫時看不懂這句話，可以換個方式說嗎？",
+        "en": "Sorry, I didn’t get that. Could you rephrase?"
+    },
+    "language_changed": {
+        "zh-TW": "已切換語言",
+        "en": "Language changed"
+    },
+    "no_expense_in_range": {
+        "zh-TW": "{range}內沒有支出資料喔！",
+        "en": "No expenses in {range}."
+    },
+    "chart_failed": {
+        "zh-TW": "圖表生成失敗，請稍後再試",
+        "en": "Chart generation failed. Please try again later."
+    },
+    "detail_list_title": {
+        "zh-TW": "{summary_type} 明細",
+        "en": "{summary_type} Details"
+    },
+    "view_more": {
+        "zh-TW": "查看更多",
+        "en": "View More"
+    },
+    "uncategorized": {
+        "zh-TW": "未分類",
+        "en": "Uncategorized"
+    },
+    "default_category": {
+        "zh-TW": "未分類",
+        "en": "Uncategorized"
     }
 }
 

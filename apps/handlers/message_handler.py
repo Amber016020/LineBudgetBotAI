@@ -1,277 +1,230 @@
 # === Standard Library ===
-import os
-import re
+import os, re
 from datetime import datetime, timezone, timedelta
+from collections import defaultdict
 
 # === LINE SDK ===
-from linebot.v3 import WebhookHandler
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from linebot.v3.messaging import (
-    MessagingApi, ApiClient, Configuration,
-    ReplyMessageRequest, TextMessage,
+    MessagingApi, ApiClient, Configuration, ReplyMessageRequest, TextMessage,
 )
-from linebot.v3.messaging.models import (
-    TemplateMessage, ConfirmTemplate,
-    ButtonsTemplate, PostbackAction,
-)
+from linebot.v3.messaging.models import PostbackAction, ConfirmTemplate, TemplateMessage, FlexMessage
 
 # === Common Utilities ===
 from apps.common.i18n import t, TEXTS
 import apps.common.database as db
 
 # === Services ===
-from apps.services.ai_financial_advisor import handle_ai_question
-from apps.services.reply_service import get_main_quick_reply
-from apps.services.category_classifier import classify_category
-
-# === Handlers ===
-from apps.handlers.command_utils import normalize_command
-from apps.handlers.reply_service import (
-    generate_summary_flex
-)
+from apps.services.category_classifier import classify_category_by_embedding
+from apps.services.nlp_router import route
+from apps.handlers.reply_service import generate_summary_flex
 from apps.handlers.chart_handler import generate_expense_chart
 
-
 configuration = Configuration(access_token=os.getenv("CHANNEL_ACCESS_TOKEN"))
+ALLOWED_LANGS = {"zh-TW", "en"}
 
-# Handler function for incoming LINE text messages
-def handle_message(event: MessageEvent):
-    if not isinstance(event.message, TextMessageContent):
-        return
+# ---------- helpers ----------
+def send_text(bot, event, text):
+    bot.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=text)]))
 
-    user_id = event.source.user_id
-    text = event.message.text.strip()
-    command = normalize_command(text)
-    lang = db.get_user_language(user_id) 
-    print(text)
-    with ApiClient(configuration) as api_client:
-        bot = MessagingApi(api_client)
+def send_flex(bot, event, flex: FlexMessage):
+    bot.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[flex]))
 
-        # Asks to check recent records
-        if command == "check":
-            records = db.get_last_records(user_id)
-            if not records:
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=t("no_records", lang))]
-                ))
-                return
+def canonical_lang(code: str | None) -> str | None:
+    if not code: return None
+    s = code.strip().replace("－", "-").replace("—", "-").replace("_", "-")
+    s = "".join(re.findall(r"[A-Za-z\-]+", s)).lower()
+    return {"zh-tw": "zh-TW", "en": "en"}.get(s)
 
-            actions = [
-                PostbackAction(
-                    label=t("delete_nth", lang).format(n=i+1),
-                    data=f'delete_{i+1}'
-                ) for i in range(len(records))
-            ]
-            text_list = [f'{i+1}. {r["category"]} {r["amount"]}' for i, r in enumerate(records)]
-            template = ButtonsTemplate(
-                title=t("recent_records_title", lang),
-                text="\n".join(text_list),
-                actions=actions[:4]
-            )
-            bot.reply_message(ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TemplateMessage(alt_text=t("recent_records_alt", lang), template=template)]
-            ))
-            
-        # === 新增：修改偏好語言 ===
-        elif matches_command_prefix(text, lang, "change_language_prefixes"):
-            # 假設 TEXTS["change_language_prefixes"] = {"zh-TW": ["語言", "切換語言"], "en": ["language", "lang"]}
-            parts = text.split()
-            if len(parts) >= 2:
-                new_lang = parts[1]
-                db.set_user_language(user_id, new_lang)
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=f"{t('language_changed', new_lang)} ({new_lang})")]
-                ))
-            else:
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=t("language_change_format_error", lang))]
-                ))
-            return
-        
-        # Requests an expense chart
-        elif any(kw in text for kw in ["支出圖", "chart", "週支出圖", "月支出圖", "年支出圖"]):
-            try:
-                now = datetime.now(timezone.utc)
-                time_text = text.replace("支出圖", "").replace("chart", "").strip()
-
-                if time_text in ["週", "week"]:
-                    start_time = now - timedelta(days=now.weekday())
-                    summary_type = "本週"
-                elif time_text in ["月", "month"]:
-                    start_time = now.replace(day=1)
-                    summary_type = "本月"
-                elif time_text in ["年", "year"]:
-                    start_time = now.replace(month=1, day=1)
-                    summary_type = "今年"
-                else:
-                    bot.reply_message(ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[TextMessage(text="請輸入有效的區間，例如：支出圖 週 / 月 / 年")]
-                    ))
-                    return
-
-                start_time = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
-                image_msg = generate_expense_chart(user_id, start_time=start_time, end_time=now)
-
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[image_msg]
-                ))
-            except ValueError as e:
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=f"{summary_type}內沒有支出資料喔！")]
-                ))
-            except Exception as e:
-                print(f"❌ 支出圖產生失敗: {e}")
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text="圖表生成失敗，請稍後再試")]
-                ))
-
-        # Requests a summary of expenses and income
-        elif command in ["summary", "weekly", "monthly", "yearly"]:
-            from collections import defaultdict
-            now = datetime.now(timezone.utc)
-
-            # 計算起始時間
-            if command in ["summary", "weekly"]:
-                summary_type = "週"
-                start_time = now - timedelta(days=now.weekday())  # 本週一
-                start_time = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
-            elif command == "monthly":
-                summary_type = "月"
-                start_time = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            elif command == "yearly":
-                summary_type = "年"
-                start_time = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-
-            # 查詢範圍內所有紀錄
-            records = db.get_user_transactions(user_id, start_time=start_time, end_time=now)
-
-            # 統計收入與支出
-            summary = defaultdict(int)
-            for r in records:
-                # 可以根據你 DB 的實際分類來判斷是收入還是支出
-                category = r.get("category", "").lower()
-                if category in ["收入", "income"]:
-                    summary["income"] += r["amount"]
-                else:
-                    summary["expense"] += r["amount"]
-
-            income = summary["income"]
-            expense = summary["expense"]
-            balance = income - expense
-
-            # 建立 FlexMessage 並回覆
-            flex_msg = generate_summary_flex(income, expense, balance, summary_type)
-            bot.reply_message(ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[flex_msg]
-            ))
-
-        # If the user tries to define a custom keyword → category mapping 
-        elif matches_command_prefix(text, lang, "add_category_prefixes"):
-            print("第一步")
-            all_prefixes = TEXTS["add_category_prefixes"]["zh-TW"] + TEXTS["add_category_prefixes"]["en"]
-            prefix_pattern = "|".join(re.escape(p) for p in all_prefixes)
-            match = re.match(rf"({prefix_pattern})\s*(\S+)\s*=\s*(\S+)", text, re.IGNORECASE)
-            print("第二步")
-            if match:
-                keyword = match.group(2).lower()
-                category = match.group(3).lower()
-                print(keyword, " " , category)
-                # 先刪除再新增（符合修改 spec）
-                db.delete_user_category(user_id, keyword)
-                db.add_user_category(user_id, keyword, category)
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[
-                        TextMessage(text=t("category_added", lang).format(keyword=keyword, category=category)),
-                        get_confirm_template(
-                            text=t("category_sync_prompt", lang).format(keyword=keyword, category=category),
-                            keyword=keyword,
-                            category=category
-                        )
-                    ]
-                ))
-            else:
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=t("category_add_format_error", lang))]
-                ))
-
-        # If the user tries to delete a custom keyword
-        elif matches_command_prefix(text, lang, "delete_category_prefixes"):
-            all_prefixes = t["delete_category_prefixes"]["zh-TW"] + t["delete_category_prefixes"]["en"]
-            prefix_pattern = "|".join(re.escape(p) for p in all_prefixes)
-            match = re.match(rf"({prefix_pattern})\s*(\S+)", text, re.IGNORECASE)
-
-            if match:
-                keyword = match.group(2).lower()
-
-                db.delete_user_category(user_id, keyword)
-
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=t("category_deleted", lang).format(keyword=keyword))]
-                ))
-            else:
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=t("category_delete_format_error", lang))]
-                ))
-        
-        #  Default case – classify and record the expense, or fallback to AI
-        else:
-            # 模糊分類記帳
-            match = re.match(r'^(.+?)\s*(\d+)$', text)
-            if match:
-                message = match.group(1)
-                amount = int(match.group(2))
-                category = classify_category(message)
-                db.insert_transactions(user_id, category, amount, text)
-                category_name = t(category, lang) 
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=t("recorded_item", lang).format(category=category_name, amount=amount))]
-                ))
-            else:
-                # 其餘的句子（不符合金額格式），一律丟給 AI 處理
-                # answer = handle_ai_question(user_id, text)
-                # bot.reply_message(ReplyMessageRequest(
-                #     reply_token=event.reply_token,
-                #     messages=[TextMessage(text=answer)]
-                # ))
-                # 暫時不啟用 AI 回答，只顯示提示語
-                bot.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text="目前為 AI 判斷階段，尚未提供回應功能。")]
-                ))
-# Check if the input text starts with any of the command prefixes for a given key and language.
-def matches_command_prefix(text: str, lang: str, key: str) -> bool:
-    prefixes = t(key, lang)
-    return any(text.lower().startswith(p.lower()) for p in prefixes)
-
-# Generate a ConfirmTemplate message that asks the user whether to synchronize the custom keyword-category mapping.
 def get_confirm_template(text, keyword, category):
     return TemplateMessage(
         alt_text=text,
         template=ConfirmTemplate(
             text=text,
             actions=[
-                PostbackAction(
-                    label="✅ 是",
-                    data=f"SYNC_CATEGORY_YES|{keyword}|{category}"
-                ),
-                PostbackAction(
-                    label="❌ 否",
-                    data="SYNC_CATEGORY_NO"
-                )
-            ]
-        )
+                PostbackAction(label="✅ 是", data=f"SYNC_CATEGORY_YES|{keyword}|{category}"),
+                PostbackAction(label="❌ 否", data="SYNC_CATEGORY_NO"),
+            ],
+        ),
     )
+
+def resolve_user_category(user_id: str, message: str) -> str | None:
+    try:
+        user_map = db.get_user_categories(user_id) or {}
+    except Exception:
+        user_map = {}
+    mlow = message.lower()
+    for kw, cat in user_map.items():
+        if kw.lower() in mlow:
+            return cat
+    return None
+
+def period_from_label(label: str, now: datetime):
+    """label: week|month|year -> (start, end, human_label_key)"""
+    if label == "week":
+        start = now - timedelta(days=now.weekday())
+        key = "week"
+    elif label == "month":
+        start = now.replace(day=1)
+        key = "month"
+    else:
+        start = now.replace(month=1, day=1)
+        key = "year"
+    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start, now, key
+
+def flex_recent_records(records, lang):
+    def ellipsis(s, n): s = str(s or ""); return s if len(s) <= n else s[:n-1] + "…"
+    rows = []
+    for i, r in enumerate(records[:10], start=1):
+        raw_cat = (r.get("category") or "").strip()
+        name = t(raw_cat, lang) if raw_cat else t("uncategorized", lang)
+        rows.append({
+            "type": "box", "layout": "horizontal",
+            "contents": [
+                {"type": "text", "text": f"{i}. {ellipsis(name, 14)}", "size": "sm", "flex": 3},
+                {"type": "text", "text": str(r.get("amount", "")), "size": "sm", "align": "end", "flex": 1},
+            ]
+        })
+    actions = [{
+        "type": "button", "style": "secondary", "height": "sm",
+        "action": {"type": "postback", "label": t("delete_nth", lang).format(n=i), "data": f"delete_{i}"}
+    } for i in range(1, min(len(records), 4) + 1)]
+    bubble = {
+        "type": "bubble",
+        "body": {"type": "box", "layout": "vertical", "spacing": "md",
+                 "contents": [{"type": "text", "text": t("recent_records_title", lang), "weight": "bold", "size": "lg"}, *rows]},
+        "footer": {"type": "box", "layout": "vertical", "spacing": "sm", "contents": actions}
+    }
+    return FlexMessage.from_dict({"type": "flex", "altText": t("recent_records_alt", lang), "contents": bubble})
+
+# ---------- intent handlers ----------
+def do_check(user_id, event, lang, bot, **_):
+    records = db.get_last_records(user_id)
+    if not records:
+        return send_text(bot, event, t("no_records", lang))
+    return send_flex(bot, event, flex_recent_records(records, lang))
+
+def do_change_language(user_id, event, lang, bot, new_lang=None, **_):
+    nl = canonical_lang(new_lang)
+    if nl and nl in ALLOWED_LANGS:
+        db.set_user_language(user_id, nl)
+        return send_text(bot, event, f"{t('language_changed', nl)} ({nl})")
+    return send_text(bot, event, t("language_not_supported", lang))
+
+def do_chart(user_id, event, lang, bot, range=None, **_):
+    if not range:
+        return send_text(bot, event, t("chart_range_hint", lang))
+    now = datetime.now(timezone.utc)
+    start, end, key = period_from_label(range, now)
+    try:
+        img = generate_expense_chart(user_id, start_time=start, end_time=end, lang=lang)
+        bot.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[img]))
+    except ValueError:
+        send_text(bot, event, t("no_expense_in_range", lang).format(range=t(key, lang)))
+    except Exception as e:
+        print(f"❌ Chart error: {e}")
+        send_text(bot, event, t("chart_failed", lang))
+
+def do_summary(user_id, event, lang, bot, range=None, **_):
+    now = datetime.now(timezone.utc)
+    start, end, key = period_from_label(range or "week", now)
+    records = db.get_user_transactions(user_id, start_time=start, end_time=end)
+    sums = defaultdict(int)
+    for r in records:
+        cat = (r.get("category") or "").lower()
+        (sums["income"] if cat in ["收入", "income"] else sums.__setitem__)  # noop line to keep style
+
+    # explicit accumulate (avoid cleverness)
+    sums = defaultdict(int)
+    for r in records:
+        cat = (r.get("category") or "").lower()
+        if cat in ["收入", "income"]:
+            sums["income"] += r.get("amount", 0)
+        else:
+            sums["expense"] += r.get("amount", 0)
+
+    income, expense = sums["income"], sums["expense"]
+    flex = generate_summary_flex(
+        income, expense, income - expense,
+        records=records, summary_type=t(key, lang), lang=lang
+    )
+    return send_flex(bot, event, flex)
+
+def do_add_category(user_id, event, lang, bot, text=None, **_):
+    all_prefixes = TEXTS["add_category_prefixes"]["zh-TW"] + TEXTS["add_category_prefixes"]["en"]
+    prefix_pattern = "|".join(re.escape(p) for p in all_prefixes)
+    m = re.match(rf"({prefix_pattern})\s*(\S+)\s*=\s*(\S+)", text or "", re.IGNORECASE)
+    if not m:
+        return send_text(bot, event, t("category_add_format_error", lang))
+    kw, cat = m.group(2).lower(), m.group(3).lower()
+    db.delete_user_category(user_id, kw)
+    db.add_user_category(user_id, kw, cat)
+    bot.reply_message(ReplyMessageRequest(
+        reply_token=event.reply_token,
+        messages=[
+            TextMessage(text=t("category_added", lang).format(keyword=kw, category=cat)),
+            get_confirm_template(text=t("category_sync_prompt", lang).format(keyword=kw, category=cat), keyword=kw, category=cat),
+        ]
+    ))
+
+def do_delete_category(user_id, event, lang, bot, text=None, **_):
+    all_prefixes = TEXTS["delete_category_prefixes"]["zh-TW"] + TEXTS["delete_category_prefixes"]["en"]
+    prefix_pattern = "|".join(re.escape(p) for p in all_prefixes)
+    m = re.match(rf"({prefix_pattern})\s*(\S+)", text or "", re.IGNORECASE)
+    if not m:
+        return send_text(bot, event, t("category_delete_format_error", lang))
+    kw = m.group(2).lower()
+    db.delete_user_category(user_id, kw)
+    return send_text(bot, event, t("category_deleted", lang).format(keyword=kw))
+
+_rec_pat = re.compile(r"^(.+?)\s*([+-]?\d+(?:,\d{3})*)(?:\s*(?:元|ntd))?$", re.IGNORECASE)
+
+def do_record(user_id, event, lang, bot, text=None, rec_desc=None, rec_amt=None, **_):
+    # Fallback to regex if router didn't parse amount slots
+    if rec_desc is None or rec_amt is None:
+        m = _rec_pat.match((text or "").strip())
+        if not m:
+            return send_text(bot, event, t("not_understood", lang))
+        rec_desc, rec_amt = m.group(1), int(m.group(2).replace(",", ""))
+    cat = resolve_user_category(user_id, rec_desc) or classify_category_by_embedding(rec_desc)
+    db.insert_transactions(user_id, cat, rec_amt, text or f"{rec_desc} {rec_amt}")
+    return send_text(bot, event, t("recorded_item", lang).format(category=t(cat, lang), amount=rec_amt))
+
+def do_unknown(user_id, event, lang, bot, **_):
+    return send_text(bot, event, t("not_understood", lang))
+
+# intent -> handler mapping
+INTENT_MAP = {
+    "check": do_check,
+    "change_language": do_change_language,
+    "chart": do_chart,
+    "summary": do_summary,
+    "add_category": do_add_category,
+    "delete_category": do_delete_category,
+    "record": do_record,
+    "unknown": do_unknown,
+}
+
+# ---------- main entry ----------
+def handle_message(event: MessageEvent):
+    if not isinstance(event.message, TextMessageContent):
+        return
+
+    user_id = event.source.user_id
+    text = event.message.text.strip()
+    lang = db.get_user_language(user_id) or "zh-TW"
+
+    with ApiClient(configuration) as api_client:
+        bot = MessagingApi(api_client)
+        r = route(text, lang) or {"intent": "unknown"}
+        intent = r.get("intent", "unknown")
+        handler = INTENT_MAP.get(intent, do_unknown)
+
+        # Pass all slots to handler; handlers ignore unused keys
+        try:
+            handler(user_id, event, lang, bot, **{**r, "text": text})
+        except Exception as e:
+            # One last safety net
+            print(f"[handle_message] intent={intent} error={e}")
+            send_text(bot, event, t("not_understood", lang))
