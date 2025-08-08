@@ -29,7 +29,7 @@ def handle_postback(event: PostbackEvent):
                 messages=[
                     TextMessage(
                         text=msg,
-                        quick_reply=get_main_quick_reply(lang)  # ← 這裡帶上主 QuickReply
+                        quick_reply=get_main_quick_reply(lang) 
                     )
                 ]
             ))

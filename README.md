@@ -87,10 +87,9 @@ AI-LineBot/
 
 | 功能 | 指令範例 | 畫面示意 |
 | :--- | :--- | :--- |
-| **查詢** | `查帳` | ![查帳](images/check.png) |
-| **總結** | `本週總結` | ![本週總結](images/summary.png) |
-| **圖表** | `週支出長條圖` | ![週支出圖表](images/barChart.png) |
-
+| **查詢** | `查帳` | <img src="images/check.png" width="200"/> |
+| **總結** | `本週總結` | <img src="images/summary.png" width="200"/> |
+| **圖表** | `週支出長條圖` | <img src="images/barChart.png" width="200"/> |
 
 ### 🌍 語言自動切換
 

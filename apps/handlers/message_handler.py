@@ -44,7 +44,7 @@ def send_text(bot, event, text, lang="zh-TW"):
         messages=[
             TextMessage(
                 text=text,
-                quick_reply=get_main_quick_reply(lang)  # 這裡加
+                quick_reply=get_main_quick_reply(lang)
             )
         ]
     ))
@@ -71,7 +71,7 @@ def canonical_lang(code: str | None) -> str | None:
 
 def resolve_user_category(user_id: str, message: str) -> str | None:
     try:
-        pairs = db.get_user_categories(user_id)  # [(keyword, root_category), ...]
+        pairs = db.get_user_categories(user_id) 
     except Exception:
         pairs = []
 

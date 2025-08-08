@@ -12,13 +12,10 @@ def generate_summary_carousel(
     records, summary_type, lang="zh-TW",
     page_size=8
 ):
-    """
-    將 summary 明細切成多頁（carousel）。最多 10 張 bubble（LINE 限制）。
-    """
+
     pages = list(_chunks(records, page_size))[:10]
     total_pages = max(1, len(pages))
 
-    # 沒資料時也給一張空頁
     if not pages:
         from linebot.v3.messaging.models import FlexMessage
         empty = generate_summary_flex(
@@ -36,10 +33,10 @@ def generate_summary_carousel(
             summary_type=page_title,
             lang=lang,
             max_detail_rows=page_size,
-            more_postback_data=None  # carousel 版本不放「查看更多」
+            more_postback_data=None  
         )
-        bubbles.append(bubble_msg.contents)  # 取 bubble dict
-
+        bubbles.append(bubble_msg.contents)  
+        
     from linebot.v3.messaging.models import FlexMessage
     return FlexMessage.from_dict({
         "type": "flex",
@@ -48,9 +45,6 @@ def generate_summary_carousel(
     })
 
 def flex_recent_records_carousel(records, lang="zh-TW", page_size=10):
-    """
-    將最近紀錄清單切成多頁（carousel）。最多 10 張 bubble（LINE 限制）。
-    """
     from linebot.v3.messaging.models import FlexMessage
     pages = list(_chunks(records, page_size))[:10]
     if not pages:
@@ -59,9 +53,9 @@ def flex_recent_records_carousel(records, lang="zh-TW", page_size=10):
     bubbles = []
     total_pages = len(pages)
     for idx, recs in enumerate(pages, start=1):
-        bubble_msg = flex_recent_records(recs, lang)   # FlexMessage
-        bubble = bubble_msg.contents                    # bubble dict
-        # 在標題尾端加頁碼（安全 try）
+        bubble_msg = flex_recent_records(recs, lang)   
+        bubble = bubble_msg.contents                    
+        
         try:
             title_node = bubble["body"]["contents"][0]
             if isinstance(title_node, dict) and title_node.get("type") == "text":

@@ -310,7 +310,6 @@ def get_user_category_sums_for_chart(
 
     time_sql = (" AND " + " AND ".join(time_filters)) if time_filters else ""
 
-    # 只統計「有分類」的支出；未分類 (NULL/0) 直接忽略
     query = f"""
         WITH user_cats AS (
             SELECT id, name
